@@ -22,7 +22,7 @@ namespace das.Extensions.Adapter
             set
             {
                 _source = value;
-                BindProperties();
+                ProcessProperties();
             }
         }
 
@@ -40,13 +40,19 @@ namespace das.Extensions.Adapter
 
         public string Errors => _errors?.ToString();
 
+        protected void ProcessProperties()
+        {
+            BindProperties();
+            if (!ValidateObject()) return;
+            FormattingProperties();
+        }
+
         protected void BindProperties()
         {
-            Type type = GetType();
-
             int columnCount = Source.Length;
 
-            IEnumerable<PropertyInfo> properties = type.GetProperties(BindingFlags.Public | BindingFlags.Instance).Where(p => p.GetCustomAttributes()
+            IEnumerable<PropertyInfo> properties = GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance).Where(p => p
+                .GetCustomAttributes()
                 .Any(a => a is BindAttribute));
 
             foreach (PropertyInfo prop in properties)
@@ -64,12 +70,29 @@ namespace das.Extensions.Adapter
                     }
                     catch (Exception e)
                     {
-                        Error($"Поле [{prop.Name}] ошибка преобразования [{value}] к типу [{prop.PropertyType.FullName}] ({e.Message})");
+                        Error(
+                            $"Поле [{prop.Name}] ошибка преобразования [{value}] к типу [{prop.PropertyType.FullName}] ({e.Message})");
                     }
                 }
             }
+        }
 
-            ValidateObject();
+        protected void FormattingProperties()
+        {
+            IEnumerable<PropertyInfo> properties = GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance).Where(p => p
+                .GetCustomAttributes()
+                .Any(a => a is FormattingAttribute));
+
+            foreach (PropertyInfo prop in properties)
+            {
+                if (prop.GetCustomAttributes(typeof(FormattingAttribute), false) is FormattingAttribute[] formats)
+                    foreach (FormattingAttribute format in formats)
+                    {
+                        object oldValue = prop.GetValue(this);
+                        object newValue = format.Format(oldValue);
+                        prop.SetValue(this, newValue);
+                    }
+            }
         }
 
         protected object ValueOrDefault(Type propType, object value, object defaultValue)
@@ -80,7 +103,7 @@ namespace das.Extensions.Adapter
             return Convert.ChangeType(value, propType);
         }
 
-        protected void ValidateObject()
+        protected bool ValidateObject()
         {
             var results = new List<ValidationResult>();
             var context = new ValidationContext(this);
@@ -88,7 +111,10 @@ namespace das.Extensions.Adapter
             if (!Validator.TryValidateObject(this, context, results, true))
             {
                 results.Do(r => Error(r.ErrorMessage));
+                return false;
             }
+
+            return true;
         }
     }
 }
